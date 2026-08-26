@@ -33,8 +33,15 @@ MEDICAMENTS = [
 def generer_er_pha_f(df_praticiens, df_beneficiaires, df_prestations):
     """
     Genere la table des delivrances pharmaceutiques.
-    Approche : pour chaque medecin prescripteur,
-    on genere directement N delivrances aleatoires.
+
+    COMPORTEMENT NORMAL :
+    Chaque prescripteur distribue ses prescriptions
+    sur 5 a 15 pharmacies differentes.
+    La pharmacie principale recoit 30-40% des prescriptions.
+    Les autres recoivent le reste de facon decroissante.
+
+    COMPORTEMENT ANOMAL S5 (injecte separement) :
+    85-95% vers une seule pharmacie.
     """
     delivrances = []
     compteur = 1
@@ -55,19 +62,37 @@ def generer_er_pha_f(df_praticiens, df_beneficiaires, df_prestations):
     ]["PRANUM_PRA"].tolist()
 
     print(f"  {len(prescripteurs)} prescripteurs, {len(pharmacies)} pharmacies")
+    print("Generation ER_PHA_F en cours...")
 
     # Beneficiaires disponibles
     ben_list = df_beneficiaires["BEN_IDT_ANO"].tolist()
 
-    print("Generation ER_PHA_F en cours...")
-
     for pranum in prescripteurs:
-        # Pharmacie principale de ce prescripteur
-        pharma_principale = np.random.choice(pharmacies)
-        concentration = np.random.uniform(0.30, 0.40)
+
+        # Nombre de pharmacies actives pour ce prescripteur
+        # Un MG normal envoie vers 8 a 15 pharmacies differentes
+        nb_pharmas_actives = np.random.randint(8, 16)
+        nb_pharmas_actives = min(nb_pharmas_actives, len(pharmacies))
+
+        # Selectionner les pharmacies de ce prescripteur
+        pharmas_prescripteur = np.random.choice(
+            pharmacies,
+            size=nb_pharmas_actives,
+            replace=False
+        )
+
+        # Poids decroissants :
+        # 35% vers la principale, puis decroissant
+        # C'est le comportement NORMAL
+        poids_bruts = np.array([
+            0.35, 0.15, 0.12, 0.09, 0.07,
+            0.06, 0.05, 0.04, 0.04, 0.03,
+            0.02, 0.02, 0.01, 0.005, 0.005
+        ])
+        poids = poids_bruts[:nb_pharmas_actives]
+        poids = poids / poids.sum()  # normaliser a 1.0
 
         # Nombre de delivrances pour ce praticien sur l'annee
-        # Un MG avec 1000 patients → ~800 prescriptions/an
         nb_delivrances = int(np.random.poisson(800))
 
         for i in range(nb_delivrances):
@@ -78,16 +103,15 @@ def generer_er_pha_f(df_praticiens, df_beneficiaires, df_prestations):
             # Patient aleatoire
             ben_idt = np.random.choice(ben_list)
 
-            # Pharmacie
-            if np.random.random() < concentration:
-                pharma = pharma_principale
-            else:
-                pharma = np.random.choice(pharmacies)
+            # Pharmacie selon les poids normaux
+            pharma = np.random.choice(pharmas_prescripteur, p=poids)
 
             # Dates
             jours = np.random.randint(0, 365)
             date_presc = date(2023, 1, 1) + timedelta(days=jours)
-            date_deliv = date_presc + timedelta(days=np.random.randint(0, 8))
+            date_deliv = date_presc + timedelta(
+                days=np.random.randint(0, 8)
+            )
             if date_deliv > date(2023, 12, 31):
                 date_deliv = date(2023, 12, 31)
 
@@ -127,6 +151,15 @@ def generer_er_pha_f(df_praticiens, df_beneficiaires, df_prestations):
 
     print(f"ER_PHA_F : {len(df):,} delivrances generees")
     print(f"  Montant total rembourse : {df['BSE_REM_MNT'].sum():,.0f} euros")
+
+    # Verifier la concentration normale
+    concentration_test = df.groupby("PFS_PRE_NUM").apply(
+        lambda x: x["PRANUM_EXE"].value_counts().iloc[0] / len(x) * 100
+        if len(x) > 0 else 0
+    ).mean()
+    print(f"  Concentration moyenne normale : {concentration_test:.1f}%")
+    print(f"  (attendu : 30-40%)")
+
     return df
 
 
