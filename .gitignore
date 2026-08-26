@@ -1,0 +1,24 @@
+# Environnements
+venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# Donnees (trop lourdes)
+data/raw/*.csv
+data/features/*.csv
+
+# Modeles
+*.pkl
+*.joblib
+
+# Notebooks checkpoints
+.ipynb_checkpoints/
+
+# Ground truth (jamais sur GitHub public)
+ground_truth.csv
+
+# Logs
+*.log
+src/data/raw/*.csv
+data/*.csv
