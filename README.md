@@ -86,3 +86,29 @@ Octavien YAMESSE  Data Scientist
 
 github.com/octa425
 
+
+## Perspectives d'amelioration
+
+### 1. Robustesse du score d'anomalie
+Le score normalise entre 0 et 1 utilise
+une normalisation MinMax dependante des
+donnees d'entrainement actuelles.
+En production sur des flux live, il faudra
+figer les bornes Min/Max historiques ou
+utiliser directement score_samples() natif
+de scikit-learn.
+
+### 2. Simplification du pipeline ML
+Le StandardScaler pourra etre retire lors
+d'un refactoring. Isolation Forest etant
+base sur des arbres de decision, il est
+insensible a l'echelle des variables.
+Aucune perte de performance attendue.
+
+### 3. Traitement des valeurs manquantes
+Le fillna(0) actuel est justifie pour le
+contexte metier des auxiliaires medicaux
+(zscore depassement = 0 car secteur 1).
+A surveiller si de nouvelles specialites
+avec d'autres structures de donnees
+manquantes entrent dans le perimetre.
