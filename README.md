@@ -2,7 +2,7 @@
 ## Contexte
 Projet de detection d'anomalies et de comportements
 potentiellement suspects dans les donnees de soins de ville,
-inspire du DCIR (Dispositif de Chainage Inter-Regimes)
+inspire du DCIR (Datamart de Consommation Inter-Regimes)
 et du SIAM (Systeme d'Information de l'Assurance Maladie).
 **Important :** Isolation Forest detecte des observations
 atypiques. Il ne qualifie pas juridiquement une fraude.
