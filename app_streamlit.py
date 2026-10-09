@@ -1,9 +1,3 @@
-# ============================================================
-# app_streamlit.py Dashboard Détection anomalies DCIR
-# Projet Détection anomalies DCIR
-# Auteur : Octavien YAMESSE
-# ============================================================
-
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -32,6 +26,27 @@ def charger_donnees():
     return df
 
 df = charger_donnees()
+
+# ── Règles métier (anomalies certaines, sans besoin de modèle) ──
+# L'Isolation Forest repère des profils atypiques "en général" : un signal net sur un
+# seul indicateur se dilue parmi les 17. Les règles rattrapent ces cas.
+# Règle post-mortem : à passer à True une fois corrigé le générateur de prestations
+# (avant correction, des praticiens normaux ont aussi des actes après décès).
+REGLE_POST_MORTEM = False
+SEUIL_CONCENTRATION_PHARMACIE = 60   # % ; maximum observé chez les praticiens normaux : 43 %
+
+def appliquer_regles(d):
+    d = d.copy()
+    motifs = pd.DataFrame(index=d.index)
+    motifs["Bénéficiaire inexistant"] = d["nb_beneficiaires_fictifs"] > 0
+    motifs["Pharmacie quasi exclusive"] = d["concentration_pharmacie_pct"] > SEUIL_CONCENTRATION_PHARMACIE
+    if REGLE_POST_MORTEM:
+        motifs["Acte après décès"] = d["nb_actes_post_mortem"] > 0
+    d["regle_declenchee"] = motifs.any(axis=1)
+    d["motif_regle"] = [", ".join(motifs.columns[ligne]) for ligne in motifs.values]
+    return d
+
+df = appliquer_regles(df)
 
 # ── Normes par spécialité ─────────────────────────────────
 NORMES = {
@@ -76,8 +91,21 @@ spe_filtre = st.sidebar.selectbox("Spécialité", specialites)
 seuil_score = st.sidebar.slider(
     "Seuil score anomalie",
     min_value=0.0, max_value=1.0,
-    value=0.5, step=0.05
+    value=0.30, step=0.01
 )
+
+avec_regles = st.sidebar.checkbox(
+    "Ajouter les règles métier", value=True,
+    help="Signale aussi les praticiens qui déclenchent une règle certaine "
+         "(bénéficiaire inexistant, pharmacie quasi exclusive), quel que soit le score."
+)
+
+def est_suspect(d):
+    """Suspect = score au-dessus du seuil, OU règle métier déclenchée (si activée)."""
+    masque = d["score_anomalie"] >= seuil_score
+    if avec_regles:
+        masque = masque | d["regle_declenchee"]
+    return masque
 
 df_filtre = df.copy()
 if spe_filtre != "Toutes":
@@ -91,27 +119,45 @@ if page == "Vue globale":
         "Détection de comportements potentiellement suspects"
     )
 
+    # ── Métriques dynamiques selon le seuil (et la spécialité filtrée) ──
+    suspects_mask = est_suspect(df_filtre)
+    nb_suspects   = int(suspects_mask.sum())
+    a_verite      = "ANOMALIE_ANY" in df_filtre.columns
+
+    if a_verite:
+        gt  = df_filtre["ANOMALIE_ANY"].astype(int)
+        vp  = int((suspects_mask & (gt == 1)).sum())
+        fp  = int((suspects_mask & (gt == 0)).sum())
+        fn  = int((~suspects_mask & (gt == 1)).sum())
+        precision_dyn = vp / (vp + fp) * 100 if (vp + fp) > 0 else 0.0
+        rappel_dyn    = vp / (vp + fn) * 100 if (vp + fn) > 0 else 0.0
+        f1_dyn        = (2 * precision_dyn * rappel_dyn / (precision_dyn + rappel_dyn)
+                         if (precision_dyn + rappel_dyn) > 0 else 0.0)
+
     col1, col2, col3, col4, col5 = st.columns(5)
     with col1:
-        st.metric("Total praticiens", len(df))
+        st.metric("Praticiens", len(df_filtre))
     with col2:
-        nb_suspects = (df["score_anomalie"] >= seuil_score).sum()
         st.metric(
             "Suspects détectés",
             nb_suspects,
-            delta=f"seuil={seuil_score} | {nb_suspects/len(df)*100:.1f}% du total"
+            delta=f"seuil={seuil_score} | {nb_suspects/max(len(df_filtre), 1)*100:.1f}% du total",
+            delta_color="off",
         )
+    # Sans vérité terrain (données réelles), on n'affiche pas de métriques inventées
     with col3:
-        st.metric("Précision modèle", "81.7%")
+        st.metric("Précision", f"{precision_dyn:.1f}%" if a_verite else "N/A")
     with col4:
-        st.metric("Rappel modèle", "77.8%")
+        st.metric("Rappel", f"{rappel_dyn:.1f}%" if a_verite else "N/A")
     with col5:
-        st.metric("F1-score", "79.7%")
+        st.metric("F1-score", f"{f1_dyn:.1f}%" if a_verite else "N/A")
 
-    st.caption(
-        "ℹ️ Les métriques (précision, rappel, F1) sont calculées par comparaison "
-        "avec le ground_truth.csv après entraînement aveugle du modèle."
-    )
+    if a_verite:
+        st.caption(
+            f"ℹ️ Au seuil {seuil_score} : {vp} vrais positifs, {fp} faux positifs, "
+            f"{fn} anomalies manquées. Les métriques se recalculent selon le seuil et la "
+            "spécialité, par comparaison avec ground_truth.csv (jamais vu par le modèle)."
+        )
 
     st.markdown("---")
     col1, col2 = st.columns(2)
@@ -132,7 +178,7 @@ if page == "Vue globale":
     with col2:
         st.subheader("Suspects par spécialité")
         suspects_spe = df_filtre[
-            df_filtre["score_anomalie"] >= seuil_score
+            est_suspect(df_filtre)
         ].groupby("specialite_label").size().reset_index(name="nb_suspects")
         fig2 = px.bar(
             suspects_spe.sort_values("nb_suspects", ascending=True),
@@ -143,15 +189,23 @@ if page == "Vue globale":
         )
         st.plotly_chart(fig2, use_container_width=True)
 
-    st.subheader("Performance par scénario d'anomalie")
-    scenarios_data = {
-        "Scénario": ["S1 Suractivité", "S2 Actes fantômes",
-                     "S3 Incohérence", "S4 Tarifaire", "S5 Réseau"],
-        "Vrais": [15, 10, 12, 15, 13],
-        "Détectés": [14, 4, 12, 15, 6],
-        "Taux (%)": [93, 40, 100, 100, 46]
+    st.subheader(f"Détection par scénario d'anomalie (seuil {seuil_score})")
+    SCENARIOS = {
+        "S1 Suractivité": "S1_SURACTIVITE",
+        "S2 Actes fantômes": "S2_ACTE_FANTOME",
+        "S3 Incohérence": "S3_INCOHERENCE_SPECIALITE",
+        "S4 Tarifaire": "S4_ANOMALIE_TARIFAIRE",
+        "S5 Réseau": "S5_RESEAU_ATYPIQUE",
     }
-    df_scenarios = pd.DataFrame(scenarios_data)
+    lignes = []
+    for nom, col in SCENARIOS.items():
+        if col not in df_filtre.columns:
+            continue
+        vrais = df_filtre[df_filtre[col] == 1]
+        detectes = int(est_suspect(vrais).sum())
+        lignes.append({"Scénario": nom, "Vrais": len(vrais), "Détectés": detectes,
+                       "Taux (%)": round(detectes / len(vrais) * 100) if len(vrais) else 0})
+    df_scenarios = pd.DataFrame(lignes, columns=["Scénario", "Vrais", "Détectés", "Taux (%)"])
     col1, col2 = st.columns(2)
     with col1:
         fig3 = px.bar(df_scenarios, x="Scénario", y="Taux (%)",
@@ -172,7 +226,7 @@ elif page == "Top suspects":
         "actes_par_jour_moyen", "zscore_actes_jour",
         "taux_depassement_pct", "zscore_depassement",
         "part_incompatibles_pct", "concentration_pharmacie_pct",
-        "GRAVITE_INJECTEE"
+        "motif_regle", "GRAVITE_INJECTEE"
     ]].copy()
 
     top["score_anomalie"] = top["score_anomalie"].round(3)
@@ -259,11 +313,20 @@ elif page == "Fiche praticien":
         st.metric("Spécialité", pra["specialite_label"])
         st.metric("Secteur", pra["secteur"])
     with col2:
-        score_color = "🔴" if pra["score_anomalie"] > 0.7 else \
-                      "🟠" if pra["score_anomalie"] > 0.5 else "🟢"
+        # Même seuil que le reste du tableau de bord (curseur de la barre latérale)
+        par_score = pra["score_anomalie"] >= seuil_score
+        par_regle = avec_regles and bool(pra["regle_declenchee"])
+        score_color = "🔴" if par_score else "🟢"
         st.metric("Score anomalie", f"{score_color} {pra['score_anomalie']:.3f}")
-        st.metric("Anomalie détectée",
-                  "OUI" if pra["anomalie_predite"] == 1 else "NON")
+        if par_score and par_regle:
+            motif = f"OUI (score + règle : {pra['motif_regle']})"
+        elif par_regle:
+            motif = f"OUI (règle : {pra['motif_regle']})"
+        elif par_score:
+            motif = "OUI (score)"
+        else:
+            motif = "NON"
+        st.metric(f"Signalé (seuil {seuil_score})", motif)
     with col3:
         st.metric(
             "Gravité anomalie injectée (simulation)",
@@ -364,9 +427,10 @@ elif page == "Fiche praticien":
     df_resume = pd.DataFrame(resume)
     st.dataframe(df_resume, use_container_width=True, hide_index=True)
 
-    nb_rouge = sum(1 for s in resume["Signal"] if "ANORMAL" in s)
-    nb_vert  = sum(1 for s in resume["Signal"] if "NORMAL" in s)
-    nb_na    = sum(1 for s in resume["Signal"] if "N/A" in s)
+    # On compte sur les pastilles : "NORMAL" est aussi contenu dans "ANORMAL"
+    nb_rouge = sum(1 for s in resume["Signal"] if s.startswith("🔴"))
+    nb_vert  = sum(1 for s in resume["Signal"] if s.startswith("🟢"))
+    nb_na    = sum(1 for s in resume["Signal"] if s.startswith("⚪"))
 
     col1, col2, col3 = st.columns(3)
     with col1:

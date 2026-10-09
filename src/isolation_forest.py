@@ -1,5 +1,5 @@
 # ============================================================
-# isolation_forest.py — Detection d'anomalies
+# isolation_forest.py,Detection d'anomalies
 # Projet Detection anomalies DCIR
 # Auteur : Octavien YAMESSE
 # ============================================================
@@ -13,7 +13,7 @@ import os
 RANDOM_SEED = 42
 np.random.seed(RANDOM_SEED)
 
-# Features ML — noms en minuscules (PostgreSQL)
+# Features ML noms en minuscules (PostgreSQL)
 FEATURES_ML = [
     "actes_par_jour_moyen",
     "actes_par_jour_max",
